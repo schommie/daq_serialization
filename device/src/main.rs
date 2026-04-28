@@ -10,14 +10,6 @@ const HOST_WS_URL: &str = "ws://127.0.0.1:9002";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum SystemType {
-    Daq,
-    Bms,
-    Vcu,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
 pub enum Device {
     Bms,
     Vcu,
@@ -34,42 +26,82 @@ pub enum Device {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Frame {
-    Voltages,
-    Temperatures,
-    Balancing,
-    Faults,
-    Temperature,
-    WheelSpeed,
-    Imu,
-    TorqueRequest,
-    #[serde(rename = "tbd")]
-    Tbd,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Command {
-    SetValue,
-    Reset,
-    Ping,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "system", content = "message", rename_all = "lowercase")]
 pub enum WsMessage {
-    Telemetry {
-        system: SystemType,
-        frame: Frame,
+    Daq(DaqMessage),
+    Bms(BmsMessage),
+    Vcu(VcuMessage),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "frame", rename_all = "camelCase")]
+pub enum DaqMessage {
+    Temperature {
         device: Device,
         values: HashMap<String, f32>,
     },
-    Command {
-        system: SystemType,
-        command: Command,
+    WheelSpeed {
         device: Device,
         values: HashMap<String, f32>,
+    },
+    Imu {
+        device: Device,
+        values: HashMap<String, f32>,
+    },
+    #[serde(rename = "tbd")]
+    Tbd {
+        device: Device,
+        values: HashMap<String, f32>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "frame", rename_all = "camelCase")]
+pub enum BmsMessage {
+    Voltages {
+        device: Device,
+        values: HashMap<String, f32>,
+    },
+    Temperatures {
+        device: Device,
+        values: HashMap<String, f32>,
+    },
+    Balancing {
+        device: Device,
+        values: HashMap<String, f32>,
+    },
+    Faults {
+        device: Device,
+        values: HashMap<String, f32>,
+    },
+    SetValue {
+        device: Device,
+        values: HashMap<String, f32>,
+    },
+    Reset {
+        device: Device,
+    },
+    Ping {
+        device: Device,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "frame", rename_all = "camelCase")]
+pub enum VcuMessage {
+    TorqueRequest {
+        device: Device,
+        values: HashMap<String, f32>,
+    },
+    SetValue {
+        device: Device,
+        values: HashMap<String, f32>,
+    },
+    Reset {
+        device: Device,
+    },
+    Ping {
+        device: Device,
     },
 }
 
@@ -90,7 +122,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let (ws, _) = connect_async(HOST_WS_URL).await?;
     println!("connected. type raw json and press enter to send it.");
     println!(
-        r#"example: {{"type":"telemetry","system":"daq","frame":"temperature","device":"nodefl","values":{{"rpm":42.0}}}}"#
+        r#"example: {{"system":"daq","message":{{"frame":"temperature","device":"nodefl","values":{{"rpm":42.0}}}}}}"#
     );
 
     let (mut ws_tx, mut ws_rx) = ws.split();
@@ -102,10 +134,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     println!("host -> device raw: {text}");
 
                     match serde_json::from_str::<WsMessage>(&text) {
-                        Ok(ws_message) => println!(
-                            "host -> device deserialized:\n{}",
-                            ws_message.to_pretty_json()
-                        ),
+                        Ok(ws_message) => {
+                            println!(
+                                "host -> device deserialized:\n{}",
+                                ws_message.to_pretty_json()
+                            );
+                            handle_ws_message(&ws_message);
+                        }
                         Err(_) => println!("host -> device did not match WsMessage"),
                     }
                 }
@@ -138,26 +173,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
         if line.eq_ignore_ascii_case("test") {
             let test_data = HashMap::from([("test".to_string(), 42.0)]);
 
-            let ws_message = WsMessage::Telemetry {
-                system: SystemType::Daq,
-                frame: Frame::Temperature,
+            let ws_message = WsMessage::Daq(DaqMessage::Temperature {
                 device: Device::NodeFL,
                 values: test_data,
-            };
+            });
 
-            println!("sending test telemetry:\n{}", ws_message.to_pretty_json());
+            println!("sending test daq message:\n{}", ws_message.to_pretty_json());
             ws_tx.send(ws_message.to_ws_message()).await?;
         } else if line.eq_ignore_ascii_case("test2") {
             let test_data = HashMap::from([("test2".to_string(), 42.0)]);
 
-            let ws_message = WsMessage::Command {
-                system: SystemType::Bms,
-                command: Command::SetValue,
+            let ws_message = WsMessage::Bms(BmsMessage::SetValue {
                 device: Device::Bms,
                 values: test_data,
-            };
+            });
 
-            println!("sending test command:\n{}", ws_message.to_pretty_json());
+            println!("sending test bms message:\n{}", ws_message.to_pretty_json());
             ws_tx.send(ws_message.to_ws_message()).await?;
         } else {
             ws_tx.send(Message::text(line.to_owned())).await?;
@@ -168,4 +199,66 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let _ = rx_thread.await;
 
     Ok(())
+}
+
+fn handle_ws_message(message: &WsMessage) {
+    match message {
+        WsMessage::Daq(message) => handle_daq_message(message),
+        WsMessage::Bms(message) => handle_bms_message(message),
+        WsMessage::Vcu(message) => handle_vcu_message(message),
+    }
+}
+
+fn handle_daq_message(message: &DaqMessage) {
+    println!("host -> device daq message: {message:?}");
+}
+
+fn handle_bms_message(message: &BmsMessage) {
+    println!("host -> device bms message: {message:?}");
+}
+
+fn handle_vcu_message(message: &VcuMessage) {
+    println!("host -> device vcu message: {message:?}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serializes_daq_message_with_system_router() {
+        let message = WsMessage::Daq(DaqMessage::Temperature {
+            device: Device::NodeFL,
+            values: HashMap::from([("celsius".to_string(), 23.5)]),
+        });
+
+        let json = serde_json::to_value(&message).expect("message should serialize");
+
+        assert_eq!(json["system"], "daq");
+        assert_eq!(json["message"]["frame"], "temperature");
+        assert_eq!(json["message"]["device"], "nodefl");
+        assert_eq!(json["message"]["values"]["celsius"], 23.5);
+    }
+
+    #[test]
+    fn deserializes_bms_message_without_command_or_telemetry_type() {
+        let json = r#"{
+            "system": "bms",
+            "message": {
+                "frame": "setValue",
+                "device": "bms",
+                "values": { "target": 12.0 }
+            }
+        }"#;
+
+        let message: WsMessage = serde_json::from_str(json).expect("message should deserialize");
+
+        match message {
+            WsMessage::Bms(BmsMessage::SetValue { device, values }) => {
+                assert!(matches!(device, Device::Bms));
+                assert_eq!(values["target"], 12.0);
+            }
+            other => panic!("expected BMS setValue message, got {other:?}"),
+        }
+    }
 }

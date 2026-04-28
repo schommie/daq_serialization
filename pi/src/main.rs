@@ -11,14 +11,6 @@ const SERVER_ADDR: &str = "127.0.0.1:9002";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum SystemType {
-    Daq,
-    Bms,
-    Vcu,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
 pub enum Device {
     Bms,
     Vcu,
@@ -35,42 +27,82 @@ pub enum Device {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Frame {
-    Voltages,
-    Temperatures,
-    Balancing,
-    Faults,
-    Temperature,
-    WheelSpeed,
-    Imu,
-    TorqueRequest,
-    #[serde(rename = "tbd")]
-    Tbd,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Command {
-    SetValue,
-    Reset,
-    Ping,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "system", content = "message", rename_all = "lowercase")]
 pub enum WsMessage {
-    Telemetry {
-        system: SystemType,
-        frame: Frame,
+    Daq(DaqMessage),
+    Bms(BmsMessage),
+    Vcu(VcuMessage),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "frame", rename_all = "camelCase")]
+pub enum DaqMessage {
+    Temperature {
         device: Device,
         values: HashMap<String, f32>,
     },
-    Command {
-        system: SystemType,
-        command: Command,
+    WheelSpeed {
         device: Device,
         values: HashMap<String, f32>,
+    },
+    Imu {
+        device: Device,
+        values: HashMap<String, f32>,
+    },
+    #[serde(rename = "tbd")]
+    Tbd {
+        device: Device,
+        values: HashMap<String, f32>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "frame", rename_all = "camelCase")]
+pub enum BmsMessage {
+    Voltages {
+        device: Device,
+        values: HashMap<String, f32>,
+    },
+    Temperatures {
+        device: Device,
+        values: HashMap<String, f32>,
+    },
+    Balancing {
+        device: Device,
+        values: HashMap<String, f32>,
+    },
+    Faults {
+        device: Device,
+        values: HashMap<String, f32>,
+    },
+    SetValue {
+        device: Device,
+        values: HashMap<String, f32>,
+    },
+    Reset {
+        device: Device,
+    },
+    Ping {
+        device: Device,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "frame", rename_all = "camelCase")]
+pub enum VcuMessage {
+    TorqueRequest {
+        device: Device,
+        values: HashMap<String, f32>,
+    },
+    SetValue {
+        device: Device,
+        values: HashMap<String, f32>,
+    },
+    Reset {
+        device: Device,
+    },
+    Ping {
+        device: Device,
     },
 }
 
@@ -90,7 +122,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let listener = TcpListener::bind(SERVER_ADDR).await?;
     println!("pi websocket server listening on ws://{SERVER_ADDR}");
     println!(
-        r#"try sending: {{"type":"telemetry","system":"daq","frame":"temperature","device":"nodefl","values":{{"rpm":42.0}}}}"#
+        r#"try sending: {{"system":"daq","message":{{"frame":"temperature","device":"nodefl","values":{{"rpm":42.0}}}}}}"#
     );
 
     loop {
@@ -110,12 +142,10 @@ async fn handle_client(stream: TcpStream, addr: SocketAddr) -> Result<(), Box<dy
     let (mut ws_tx, mut ws_rx) = ws.split();
 
     let hello_data = HashMap::from([("connected".to_string(), 1.0)]);
-    let hello = WsMessage::Telemetry {
-        system: SystemType::Daq,
-        frame: Frame::Temperature,
+    let hello = WsMessage::Daq(DaqMessage::Temperature {
         device: Device::Raspi,
         values: hello_data,
-    };
+    });
 
     println!("sending hello:\n{}", hello.to_pretty_json());
     ws_tx.send(hello.to_ws_message()).await?;
@@ -155,21 +185,110 @@ async fn handle_client(stream: TcpStream, addr: SocketAddr) -> Result<(), Box<dy
 
 fn print_ws_message_summary(message: &WsMessage) {
     match message {
-        WsMessage::Telemetry {
-            system,
-            frame,
-            device,
-            values,
-        } => {
-            println!("device -> pi telemetry from {device:?} ({system:?} {frame:?}): {values:?}");
+        WsMessage::Daq(message) => handle_daq_message(message),
+        WsMessage::Bms(message) => handle_bms_message(message),
+        WsMessage::Vcu(message) => handle_vcu_message(message),
+    }
+}
+
+fn handle_daq_message(message: &DaqMessage) {
+    match message {
+        DaqMessage::Temperature { device, values } => {
+            println!("device -> pi daq temperature from {device:?}: {values:?}");
         }
-        WsMessage::Command {
-            system,
-            command,
-            device,
-            values,
-        } => {
-            println!("device -> pi command from {device:?} ({system:?} {command:?}): {values:?}");
+        DaqMessage::WheelSpeed { device, values } => {
+            println!("device -> pi daq wheel speed from {device:?}: {values:?}");
+        }
+        DaqMessage::Imu { device, values } => {
+            println!("device -> pi daq imu from {device:?}: {values:?}");
+        }
+        DaqMessage::Tbd { device, values } => {
+            println!("device -> pi daq tbd from {device:?}: {values:?}");
+        }
+    }
+}
+
+fn handle_bms_message(message: &BmsMessage) {
+    match message {
+        BmsMessage::Voltages { device, values } => {
+            println!("device -> pi bms voltages from {device:?}: {values:?}");
+        }
+        BmsMessage::Temperatures { device, values } => {
+            println!("device -> pi bms temperatures from {device:?}: {values:?}");
+        }
+        BmsMessage::Balancing { device, values } => {
+            println!("device -> pi bms balancing from {device:?}: {values:?}");
+        }
+        BmsMessage::Faults { device, values } => {
+            println!("device -> pi bms faults from {device:?}: {values:?}");
+        }
+        BmsMessage::SetValue { device, values } => {
+            println!("device -> pi bms set value from {device:?}: {values:?}");
+        }
+        BmsMessage::Reset { device } => {
+            println!("device -> pi bms reset from {device:?}");
+        }
+        BmsMessage::Ping { device } => {
+            println!("device -> pi bms ping from {device:?}");
+        }
+    }
+}
+
+fn handle_vcu_message(message: &VcuMessage) {
+    match message {
+        VcuMessage::TorqueRequest { device, values } => {
+            println!("device -> pi vcu torque request from {device:?}: {values:?}");
+        }
+        VcuMessage::SetValue { device, values } => {
+            println!("device -> pi vcu set value from {device:?}: {values:?}");
+        }
+        VcuMessage::Reset { device } => {
+            println!("device -> pi vcu reset from {device:?}");
+        }
+        VcuMessage::Ping { device } => {
+            println!("device -> pi vcu ping from {device:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serializes_daq_message_with_system_router() {
+        let message = WsMessage::Daq(DaqMessage::Temperature {
+            device: Device::NodeFL,
+            values: HashMap::from([("celsius".to_string(), 23.5)]),
+        });
+
+        let json = serde_json::to_value(&message).expect("message should serialize");
+
+        assert_eq!(json["system"], "daq");
+        assert_eq!(json["message"]["frame"], "temperature");
+        assert_eq!(json["message"]["device"], "nodefl");
+        assert_eq!(json["message"]["values"]["celsius"], 23.5);
+    }
+
+    #[test]
+    fn deserializes_bms_message_without_command_or_telemetry_type() {
+        let json = r#"{
+            "system": "bms",
+            "message": {
+                "frame": "setValue",
+                "device": "bms",
+                "values": { "target": 12.0 }
+            }
+        }"#;
+
+        let message: WsMessage = serde_json::from_str(json).expect("message should deserialize");
+
+        match message {
+            WsMessage::Bms(BmsMessage::SetValue { device, values }) => {
+                assert!(matches!(device, Device::Bms));
+                assert_eq!(values["target"], 12.0);
+            }
+            other => panic!("expected BMS setValue message, got {other:?}"),
         }
     }
 }
