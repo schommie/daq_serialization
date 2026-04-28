@@ -1,0 +1,3 @@
+[workspace]
+members = ["device", "pi", "ws-protocol"]
+resolver = "3"

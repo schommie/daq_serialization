@@ -1,4 +1,4 @@
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use std::error::Error;
 use std::net::SocketAddr;
 use tokio::net::{TcpListener, TcpStream};
@@ -8,13 +8,6 @@ use tokio_tungstenite::tungstenite::Message as WsFrame;
 use ws_protocol::*;
 
 const SERVER_ADDR: &str = "127.0.0.1:9002";
-
-fn to_ws_frame(message: &ws_protocol::Message) -> WsFrame {
-    let json = message
-        .encode_json()
-        .expect("Message should always serialize");
-    WsFrame::text(json)
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -38,18 +31,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 async fn handle_client(stream: TcpStream, addr: SocketAddr) -> Result<(), Box<dyn Error>> {
     let ws = accept_async(stream).await?;
-    let (mut ws_tx, mut ws_rx) = ws.split();
-
-    let hello = ws_protocol::Message::Daq(DaqMessage::Temperature {
-        source: Device::Raspi,
-        samples: [TemperatureSample {
-            tire: Celsius(23.5),
-            brake: Celsius(24.0),
-        }; TEMPERATURE_SAMPLE_COUNT],
-    });
-
-    //println!("sending hello:\n{}", hello.to_pretty_json());
-    //ws_tx.send(to_ws_frame(&hello)).await?;
+    let (_ws_tx, mut ws_rx) = ws.split();
 
     let rx_thread = tokio::spawn(async move {
         while let Some(message) = ws_rx.next().await {
@@ -99,7 +81,10 @@ fn handle_daq_message(message: &DaqMessage) {
         DaqMessage::Temperature { source, samples } => {
             println!("Temperature Samples from {source:?}:");
             for (i, sample) in samples.iter().enumerate() {
-                println!("Temperature Sample {}: Brake temp - {} Tire Temp - {}", i, sample.brake.0, sample.tire.0);
+                println!(
+                    "Temperature Sample {}: Brake temp - {} Tire Temp - {}",
+                    i, sample.brake.0, sample.tire.0
+                );
             }
         }
         DaqMessage::WheelSpeed { source, rpm } => {
